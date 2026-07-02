@@ -9,24 +9,48 @@
 // Servo signal pin
 #define SERVO_PIN 6
 
-// Passive buzzer pin (PWM)
+// Passive buzzer pin
 #define BUZZER_PIN 7
+
+// Note frequencies (Hz)
+#define NOTE_C4 262
+#define NOTE_E4 330
+#define NOTE_G4 392
+#define NOTE_C5 523
 
 // HC-SR04 ultrasonic sensor pins
 #define TRIG_PIN 22
-#define ECHO_PIN 23
+#define ECHO_PIN 24
 #define MIN_OPEN_DISTANCE_CM 5
 
 #define ANGLE_CLOSED 180
 #define ANGLE_OPEN   90
 
-MFRC522 mfrc522(SS_PIN, RST_PIN);
-Servo lidServo;
-
 #define BUZZER_ON  128
 #define BUZZER_OFF 0
 
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+Servo lidServo;
+
+const byte AUTHORIZED_UID[] = {0xE6, 0xB0, 0x99, 0xAC};
+const byte AUTHORIZED_UID_SIZE = sizeof(AUTHORIZED_UID);
+
 bool isOpen = false;
+
+void setup() {
+  Serial.begin(9600);
+  Serial1.begin(9600);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  SPI.begin();
+  mfrc522.PCD_Init();
+
+  lidServo.attach(SERVO_PIN);
+  closeCan();
+}
 
 void beep(int durationMs) {
   analogWrite(BUZZER_PIN, BUZZER_ON);
@@ -34,12 +58,27 @@ void beep(int durationMs) {
   analogWrite(BUZZER_PIN, BUZZER_OFF);
 }
 
-void playOpenSong() {
+void playNote(int frequency, int durationMs) {
+  if (frequency > 0) {
+    tone(BUZZER_PIN, frequency, durationMs);
+  }
+  delay(durationMs);
+  noTone(BUZZER_PIN);
+}
+
+void playUnauthorizedSong() {
   beep(120);
   delay(60);
   beep(120);
   delay(60);
   beep(250);
+}
+
+void playTrashOpenSong() {
+  playNote(NOTE_C4, 160);
+  playNote(NOTE_E4, 160);
+  playNote(NOTE_G4, 160);
+  playNote(NOTE_C5, 320);
 }
 
 void printTagUID() {
@@ -51,6 +90,20 @@ void printTagUID() {
     Serial.print(mfrc522.uid.uidByte[i], HEX);
   }
   Serial.println();
+}
+
+bool isAuthorizedTag() {
+  if (mfrc522.uid.size != AUTHORIZED_UID_SIZE) {
+    return false;
+  }
+
+  for (byte i = 0; i < AUTHORIZED_UID_SIZE; i++) {
+    if (mfrc522.uid.uidByte[i] != AUTHORIZED_UID[i]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 long readDistanceCm() {
@@ -82,28 +135,13 @@ void openCan() {
   lidServo.write(ANGLE_OPEN);
   isOpen = true;
   Serial1.write(1);
-  playOpenSong();
+  playTrashOpenSong();
 }
 
 void closeCan() {
   lidServo.write(ANGLE_CLOSED);
   isOpen = false;
   Serial1.write(0);
-}
-
-void setup() {
-  Serial.begin(9600);
-  Serial1.begin(9600);
-
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
-
-  SPI.begin();
-  mfrc522.PCD_Init();
-
-  lidServo.attach(SERVO_PIN);
-  closeCan();
 }
 
 void loop() {
@@ -113,12 +151,16 @@ void loop() {
 
   printTagUID();
 
-  if (isOpen) {
-    closeCan();
-  } else if (isObstacleTooClose()) {
-    Serial.println(F("Abertura bloqueada: objeto a 5 cm ou menos"));
+  if (isAuthorizedTag()) {
+    if (isOpen) {
+      closeCan();
+    } else if (isObstacleTooClose()) {
+      Serial.println(F("Abertura bloqueada: objeto a 5 cm ou menos"));
+    } else {
+      openCan();
+    }
   } else {
-    openCan();
+    playUnauthorizedSong();
   }
 
   delay(300);
